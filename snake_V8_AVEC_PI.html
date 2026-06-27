@@ -16,8 +16,7 @@ window.piUser=null; // { username, uid } une fois connecté
 // 👉 IMPORTANT : remplace par l'URL de ton service Render une fois déployé
 // ex: 'https://snake-arena-backend.onrender.com'
 // Le jeu et le backend sont servis depuis la même URL Render, donc chemin relatif
-const BACKEND_URL =https://r-kke4.onrender.com ;
-
+const BACKEND_URL = 'https://r-kke4.onrender.com';
 // Obligatoire pour Pi.authenticate : gère un paiement resté bloqué d'une session précédente
 function onIncompletePaymentFound(payment){
   console.log('Paiement incomplet trouvé, finalisation côté serveur:', payment);
