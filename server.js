@@ -47,6 +47,9 @@ async function piApiCall(path, method = 'POST', body = null) {
 // Appelée par le frontend dès que le SDK Pi déclenche
 // onReadyForServerApproval(paymentId)
 // ============================================================
+// ============================================================
+// ROUTE 1 — APPROUVER LE PAIEMENT (CORRIGÉE)
+// ============================================================
 app.post('/payments/approve', async (req, res) => {
   try {
     const { paymentId } = req.body;
@@ -54,16 +57,33 @@ app.post('/payments/approve', async (req, res) => {
 
     console.log('Approbation du paiement :', paymentId);
 
-    // Ici tu peux ajouter ta propre logique de vérification métier
-    // (ex: vérifier que l'utilisateur a bien le droit d'acheter ce pack)
+    // On utilise une logique personnalisée pour gérer le 404
+    const resPi = await fetch(`${PI_PLATFORM_API}/payments/${paymentId}/approve`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${PI_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    await piApiCall(`/payments/${paymentId}/approve`);
+    // CORRECTION : Si le paiement est déjà traité ou n'existe plus (404), on ne bloque pas
+    if (resPi.status === 404) {
+      console.log('Paiement déjà traité ou expiré (404), ignore...');
+      return res.status(200).json({ success: true, ignored: true });
+    }
+
+    if (!resPi.ok) {
+        const errText = await resPi.text();
+        throw new Error(`Pi API a échoué (${resPi.status}): ${errText}`);
+    }
 
     res.status(200).json({ success: true });
   } catch (e) {
     console.error('Erreur /payments/approve :', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
 });
 
 // ============================================================
