@@ -26,29 +26,25 @@ if (!PI_API_KEY) {
 }
 
 // Petit helper pour appeler l'API Pi Platform
-async function piApiCall(path, method = 'POST', body = null) {
-  const res = await fetch(`${PI_PLATFORM_API}${path}`, {
+async function piApiCall(pathUrl, method = 'POST', body = null) {
+  const url = `${PI_PLATFORM_API}${pathUrl}`;
+  const options = {
     method,
     headers: {
       'Authorization': `Key ${PI_API_KEY}`,
       'Content-Type': 'application/json'
     },
     body: body ? JSON.stringify(body) : undefined
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Pi API ${path} a échoué (${res.status}): ${errText}`);
-  }
-  return res.json();
+  };
+
+  const res = await fetch(url, options);
+  
+  // On retourne l'objet response pour pouvoir intercepter le 404 dans les routes si besoin
+  return res;
 }
 
 // ============================================================
-// ROUTE 1 — APPROUVER LE PAIEMENT
-// Appelée par le frontend dès que le SDK Pi déclenche
-// onReadyForServerApproval(paymentId)
-// ============================================================
-// ============================================================
-// ROUTE 1 — APPROUVER LE PAIEMENT (CORRIGÉE)
+// ROUTE 1 — APPROUVER LE PAIEMENT (Corrigée 404)
 // ============================================================
 app.post('/payments/approve', async (req, res) => {
   try {
@@ -57,39 +53,29 @@ app.post('/payments/approve', async (req, res) => {
 
     console.log('Approbation du paiement :', paymentId);
 
-    // On utilise une logique personnalisée pour gérer le 404
-    const resPi = await fetch(`${PI_PLATFORM_API}/payments/${paymentId}/approve`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Key ${PI_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
+    const resPi = await piApiCall(`/payments/${paymentId}/approve`, 'POST');
 
-    // CORRECTION : Si le paiement est déjà traité ou n'existe plus (404), on ne bloque pas
+    // CORRECTION : Si le paiement est expiré ou introuvable, on ignore la 404 sans faire planter l'app
     if (resPi.status === 404) {
-      console.log('Paiement déjà traité ou expiré (404), ignore...');
+      console.log('Paiement déjà traité ou expiré (404), ignoré côté serveur.');
       return res.status(200).json({ success: true, ignored: true });
     }
 
     if (!resPi.ok) {
-        const errText = await resPi.text();
-        throw new Error(`Pi API a échoué (${resPi.status}): ${errText}`);
+      const errText = await resPi.text();
+      throw new Error(`Pi API a échoué (${resPi.status}): ${errText}`);
     }
 
-    res.status(200).json({ success: true });
+    const data = await resPi.json();
+    res.status(200).json({ success: true, data });
   } catch (e) {
     console.error('Erreur /payments/approve :', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-});
-
 // ============================================================
 // ROUTE 2 — FINALISER LE PAIEMENT
-// Appelée par le frontend dès que le SDK Pi déclenche
-// onReadyForServerCompletion(paymentId, txid)
 // ============================================================
 app.post('/payments/complete', async (req, res) => {
   try {
@@ -98,12 +84,15 @@ app.post('/payments/complete', async (req, res) => {
 
     console.log('Finalisation du paiement :', paymentId, txid);
 
-    await piApiCall(`/payments/${paymentId}/complete`, 'POST', { txid });
+    const resPi = await piApiCall(`/payments/${paymentId}/complete`, 'POST', { txid });
 
-    // Ici, tu peux enregistrer en base de données que cet achat est validé
-    // (pour l'instant le frontend crédite les gemmes directement en localStorage)
+    if (!resPi.ok) {
+      const errText = await resPi.text();
+      throw new Error(`Pi API complete a échoué (${resPi.status}): ${errText}`);
+    }
 
-    res.status(200).json({ success: true });
+    const data = await resPi.json();
+    res.status(200).json({ success: true, data });
   } catch (e) {
     console.error('Erreur /payments/complete :', e.message);
     res.status(500).json({ error: e.message });
@@ -112,8 +101,6 @@ app.post('/payments/complete', async (req, res) => {
 
 // ============================================================
 // ROUTE 3 — PAIEMENT INCOMPLET (sécurité)
-// Appelée si Pi.authenticate() détecte un paiement resté bloqué
-// d'une session précédente (onIncompletePaymentFound côté frontend)
 // ============================================================
 app.post('/payments/incomplete', async (req, res) => {
   try {
@@ -122,12 +109,18 @@ app.post('/payments/incomplete', async (req, res) => {
 
     console.log('Nettoyage paiement incomplet :', paymentId);
 
+    let resPi;
     if (txid) {
       // Si une transaction existe déjà côté blockchain, on finalise
-      await piApiCall(`/payments/${paymentId}/complete`, 'POST', { txid });
+      resPi = await piApiCall(`/payments/${paymentId}/complete`, 'POST', { txid });
     } else {
       // Sinon on annule proprement
-      await piApiCall(`/payments/${paymentId}/cancel`, 'POST');
+      resPi = await piApiCall(`/payments/${paymentId}/cancel`, 'POST');
+    }
+
+    if (resPi && !resPi.ok) {
+      const errText = await resPi.text();
+      throw new Error(`Pi API incomplete a échoué (${resPi.status}): ${errText}`);
     }
 
     res.status(200).json({ success: true });
